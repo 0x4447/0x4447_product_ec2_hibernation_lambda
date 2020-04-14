@@ -114,7 +114,7 @@ function list_ec2_instances(container)
 			Filters: [
 				{
 					Name: "tag:Hibernate",
-					Values: "true"
+					Values: ["true"]
 				}
 			]
 		};
