@@ -191,7 +191,7 @@ function get_all_stats(container)
 {
 	return new Promise(function (resolve, reject) {
 
-		console.info("save_ec2_instance_ids");
+		console.info("get_all_stats");
 
 		Promise.all(container.promises_get_stats)
 			.then(function(result) {
