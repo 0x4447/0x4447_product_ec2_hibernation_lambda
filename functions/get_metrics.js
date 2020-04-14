@@ -19,7 +19,7 @@ module.exports = function(instance_id)
 		//
 		let params = {
 			EndTime: new Date(),
-			StartTime: new Date(Date.now() - 1000 * 60 * 5),
+			StartTime: new Date(Date.now() - 1000 * 60 * 10),
 			MetricName: 'CPUUtilization',
 			Namespace: 'AWS/EC2',
 			Period: '3600',
