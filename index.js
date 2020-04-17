@@ -24,26 +24,36 @@ exports.handler = (event) => {
 		//
 		let container = {
 			//
-			//	Save the IDS that were passed when the stack got deployed.
+			//	Contains the detailed description of every instances with the
+			//	matching tag.
 			//
-			tag: process.env.TAG,
+			described_instances: {},
 			//
-			//	Save the IDs in a organzied way.
+			//	Holds the Instances stats for the instacnes with hibernation 
+			//	enabled.
 			//
-			instance_ids: [],
+			get_stats_enabled: [],
 			//
-			//	Callect all the promises which will be used to get the CPU
-			//	usage for all the found instances.
+			//	Holds the Instances stats for the instacnes with hibernation 
+			//	disabled.
 			//
-			promises_get_stats: [],
+			get_stats_disabled: [],
 			//
-			//	The stats for the CPUs.
+			//	Holds the metric for the hibernation enabled instances.
 			//
-			metric: [],
+			metric_enabled: [],
 			//
-			//	Filtered Instacne IDs to be hibernated.
+			//	Holds the metric for the hibernation disabled instances.
+			//
+			metric_disabled: [],
+			//
+			//	Holds the IDs of the instances to be hibernated.
 			//
 			ids_to_hibernate: [],
+			//
+			//	Holds the IDs of the instances to be stoped.
+			//
+			ids_to_stop: [],
 			//
 			//	The default response for Lambda.
 			//
@@ -62,7 +72,11 @@ exports.handler = (event) => {
 
 			}).then(function (container) {
 
-				return get_all_stats(container);
+				return get_stats_enabled(container);
+
+			}).then(function (container) {
+
+				return get_stats_disabled(container);
 
 			}).then(function (container) {
 
@@ -70,7 +84,11 @@ exports.handler = (event) => {
 
 			}).then(function (container) {
 
-				return hibernate_instances(container);
+				return instances_to_hibernate(container);
+
+			}).then(function (container) {
+
+				return instances_to_stop(container);
 
 			}).then(function (container) {
 
@@ -148,7 +166,8 @@ function list_ec2_instances(container)
 }
 
 //
-//	List all the EC2 instances based on a tag.
+//	Loop pver all the instances, and organize the arrays with the promise
+//	based on the state of the hibernation, if it is enabled or not.
 //
 function save_ec2_instance_ids(container)
 {
@@ -166,11 +185,15 @@ function save_ec2_instance_ids(container)
 			//
 			reservation.Instances.forEach(function(instance) {
 
-				//
-				//	1.	For each instance prepare the promise that will take the
-				//		the CPU stas.
-				//
-				container.promises_get_stats.push(get_stats(instance.InstanceId))
+				if(instance.HibernationOptions.Configured)
+				{
+					container.get_stats_enabled.push(get_stats(instance.InstanceId))
+				}
+
+				if(!instance.HibernationOptions.Configured)
+				{
+					container.get_stats_disabled.push(get_stats(instance.InstanceId))
+				}
 
 			});
 
@@ -187,19 +210,50 @@ function save_ec2_instance_ids(container)
 //
 //	Fire all the prepared prosmies to get the CPU stats.
 //
-function get_all_stats(container)
+function get_stats_enabled(container)
 {
 	return new Promise(function (resolve, reject) {
 
-		console.info("get_all_stats");
+		console.info("get_stats_enabled");
 
-		Promise.all(container.promises_get_stats)
+		Promise.all(container.get_stats_enabled)
 			.then(function(result) {
 
 				//
 				//	1.	Save the resutl for the next promise.
 				//	
-				container.metric = result;
+				container.metric_enabled = result;
+
+				//
+				//	->	Move to the next promise.
+				//
+				return resolve(container);
+
+			}).catch(function(error) {
+
+				return reject(error);
+
+			});
+
+	});
+}
+
+//
+//	Fire all the prepared prosmies to get the CPU stats.
+//
+function get_stats_disabled(container)
+{
+	return new Promise(function (resolve, reject) {
+
+		console.info("get_stats_disabled");
+
+		Promise.all(container.get_stats_disabled)
+			.then(function(result) {
+
+				//
+				//	1.	Save the resutl for the next promise.
+				//	
+				container.metric_disabled = result;
 
 				//
 				//	->	Move to the next promise.
@@ -228,7 +282,7 @@ function decision_maker(container)
 		//
 		//	1.	Loop over all the metrics
 		//
-		container.metric.forEach(function(metric) {
+		container.metric_enabled.forEach(function(metric) {
 
 			//
 			//	1.	Check if there is something to work with.
@@ -250,6 +304,28 @@ function decision_maker(container)
 
 		});
 
+		container.metric_disabled.forEach(function(metric) {
+
+			//
+			//	1.	Check if there is something to work with.
+			//
+			if(metric.data.Datapoints[0])
+			{
+				//
+				//	1.	Check if the CPU is bellow the thresh hold.
+				//
+				if(metric.data.Datapoints[0].Maximum < 5)
+				{
+					//
+					//	1.	Add the Instance ID to the final array that will
+					//		be useded to hiberante.
+					//
+					container.ids_to_stop.push(metric.instance_id)
+				}
+			}
+
+		});
+
 		//
 		//	->	Move to the next promise.
 		//
@@ -261,7 +337,7 @@ function decision_maker(container)
 //
 //	Hibernate unused instances.
 //
-function hibernate_instances(container)
+function instances_to_hibernate(container)
 {
 	return new Promise(function (resolve, reject) {
 
@@ -273,7 +349,7 @@ function hibernate_instances(container)
 			return resolve(container);
 		}
 
-		console.info("hibernate_instances");
+		console.info("instances_to_hibernate");
 
 		//
 		//	1. Prepare the query.
@@ -281,6 +357,54 @@ function hibernate_instances(container)
 		let params = {
 			InstanceIds: container.ids_to_hibernate,
 			Hibernate: true
+		};
+
+		//
+		//	2.	Execute the query.
+		//
+		ec2.stopInstances(params, function (error, data) {
+			
+			//
+			//	1.	Check for internal error.
+			//	
+			if(error)
+			{
+				return reject(error);
+			}
+
+			//
+			//	->	Move to the next promise.
+			//
+			return resolve(container);
+
+		});
+
+	});
+}
+
+//
+//	Stop unused instances.
+//
+function instances_to_stop(container)
+{
+	return new Promise(function (resolve, reject) {
+
+		//
+		//	>>>	If there is nothing to stop 
+		//
+		if(!container.ids_to_stop.length)
+		{
+			return resolve(container);
+		}
+
+		console.info("instances_to_stop");
+
+		//
+		//	1. Prepare the query.
+		//
+		let params = {
+			InstanceIds: container.ids_to_stop,
+			Hibernate: false
 		};
 
 		//
