@@ -7,4 +7,4 @@ phases:
       - zip -r code.zip .
   post_build:
     finally:
-      - aws lambda update-function-code --function-name ec2_hibernation --zip-file fileb://./code.zip
+      - aws lambda update-function-code --function-name 0x4447_ec2_hibernation --zip-file fileb://./code.zip
